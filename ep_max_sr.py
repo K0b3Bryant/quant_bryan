@@ -17,17 +17,17 @@ def ep_optimal_portfolios(expected_returns, cov_matrix):
   creator.create("Individual", list, fitness=creator.FitnessMax)
   
   toolbox = base.Toolbox()
-  toolbox.register("attr_float", np.random.dirichlet, np.ones(n_assets))
+  toolbox.register("attr_float", np.random.dirichlet, np.ones(n_assets)) # Dirichlet distribution so they sum to 1
   toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.attr_float)
   toolbox.register("population", tools.initRepeat, list, toolbox.individual)
   toolbox.register("evaluate", sharpe_ratio)
   toolbox.register("mate", tools.cxBlend, alpha=0.5)
-  toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.1, indpb=0.2)
-  toolbox.register("select", tools.selTournament, tournsize=3)
+  toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.1, indpb=0.2) # Gaussian noise to weights
+  toolbox.register("select", tools.selTournament, tournsize=3) # Pick top 3 survivors
 
   # Run optimization
   pop = toolbox.population(n=100)
-  result, _ = algorithms.eaSimple(pop, toolbox, cxpb=0.7, mutpb=0.3, ngen=50, verbose=False)
+  result, _ = algorithms.eaSimple(pop, toolbox, cxpb=0.7, mutpb=0.3, ngen=50, verbose=False) # 50 generations, 0.7 crossover chance (kind of convergence), 0.3 mutation chance (kind of learning rate)
 
   # Show best portfolio
   best_portfolio = tools.selBest(result, k=1)[0]
