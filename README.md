@@ -1,2 +1,2 @@
 # Quant Bryan
-A collection of all my quantitative stuff.
+A collection of all my public quantitative stuff.
