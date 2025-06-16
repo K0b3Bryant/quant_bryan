@@ -1,2 +1,2 @@
-# bryan
-All my quant stuff
+# Quant Bryan
+A collection of all my quantitative stuff.
