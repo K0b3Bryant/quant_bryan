@@ -24,3 +24,9 @@ connections:
     dbname: "mydatabase"
     user: "myuser"
     password: "mypassword" # Never hardcode passwords in production
+
+  # An example direct MongoDB connection
+  my_mongo_db:
+    type: mongodb
+    connection_string: "mongodb://user:pass@host:port/"
+    database: "my_app_db"
