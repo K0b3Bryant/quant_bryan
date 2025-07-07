@@ -4,12 +4,14 @@ import yaml
 from connectors.api_connector import ApiConnector
 from connectors.odbc_connector import OdbcConnector
 from connectors.postgres_connector import PostgresConnector
+from connectors.mongo_connector import MongoConnector
 
 # Map the 'type' from the config file to the actual Python class
 CONNECTOR_MAPPING = {
     "rest_api": ApiConnector,
     "odbc": OdbcConnector,
     "postgres": PostgresConnector,
+    "mongodb": MongoConnector,
     # Add new mappings here as you create new connectors
 }
 
