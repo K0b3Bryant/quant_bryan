@@ -1,0 +1,40 @@
+scrapers:
+  hacker_news:
+    # A simple, static HTML site
+    url: "https://news.ycombinator.com"
+    strategy: "static"  # Use requests for speed
+    parser_class: "GenericListParser"
+    parser_config:
+      item_selector: ".athing" # CSS selector for each story row
+      fields:
+        rank:
+          selector: ".rank"
+        title:
+          selector: ".titleline > a"
+        link:
+          selector: ".titleline > a"
+          attribute: "href" # Get the 'href' attribute instead of text
+      # Optional: For scraping multiple pages
+      pagination:
+        selector: '.morelink'
+        attribute: 'href'
+
+  js_bookstore:
+    # A site that renders content with JavaScript
+    # Using a dynamic-rendering test version of 'toscrape.com'
+    url: "http://quotes.toscrape.com/js/"
+    strategy: "dynamic" # Use Selenium to execute JS
+    parser_class: "GenericListParser"
+    parser_config:
+      item_selector: ".quote"
+      fields:
+        text:
+          selector: ".text"
+        author:
+          selector: ".author"
+        tags:
+          selector: ".tag"
+          type: "list" # Scrape all matching elements
+      # Optional: Selenium will click the 'Next' button
+      pagination:
+        selector: 'li.next > a'
