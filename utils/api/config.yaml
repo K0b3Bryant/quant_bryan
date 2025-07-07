@@ -1,0 +1,26 @@
+connections:
+  # An example REST API connection (a public test API)
+  json_placeholder_api:
+    type: rest_api
+    base_url: "https://jsonplaceholder.typicode.com"
+    # For a real API, you would add:
+    # api_key: "your_secret_api_key"
+
+  # An example ODBC connection to a SQL Server
+  # NOTE: You must have the correct ODBC driver installed on your system!
+  my_sql_server_db:
+    type: odbc
+    driver: "{ODBC Driver 17 for SQL Server}"
+    server: "your_server_name.database.windows.net"
+    database: "your_database"
+    username: "your_username"
+    password: "your_password" # In production, use environment variables or a secrets manager!
+
+  # An example direct PostgreSQL connection
+  my_postgres_db:
+    type: postgres
+    host: "localhost"
+    port: 5432
+    dbname: "mydatabase"
+    user: "myuser"
+    password: "mypassword" # Never hardcode passwords in production
