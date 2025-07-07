@@ -1,0 +1,4 @@
+requests
+pyodbc
+psycopg2-binary
+PyYAML
