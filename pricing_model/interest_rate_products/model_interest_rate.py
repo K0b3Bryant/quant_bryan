@@ -16,6 +16,12 @@ class ShortRateModel:
     def zero_coupon_bond_price(self, T, t=0, r=None):
         raise NotImplementedError()
 
+    def monte_carlo_discount_factor(self, T, n_paths=10000, dt=0.01):
+        """Simulate discount factor using Monte Carlo: E[exp(-∫r dt)]"""
+        paths = self.simulate_paths(T, n_paths=n_paths, dt=dt)
+        r_avg = paths.mean(axis=0)  # average over time for each path
+        discount_factors = np.exp(-r_avg * T)
+        return discount_factors.mean()
 
 # Vasicek Model
 class VasicekModel(ShortRateModel):
@@ -105,7 +111,10 @@ def main():
 
     if product_choice == "zero_coupon":
         price = model.zero_coupon_bond_price(T)
-        print(f"\nZero-Coupon Bond Price at T={T} under {model_choice.title()} model: {price:.4f}")
+        mc_price = model.monte_carlo_discount_factor(T)
+        print(f"\nAnalytical ZCB Price at T={T}: {price:.4f}")
+        print(f"Monte Carlo ZCB Price (n=10000): {mc_price:.4f}")
+
         paths = model.simulate_paths(T, n_paths=10)
         plt.plot(paths)
         plt.title(f"Interest Rate Paths - {model_choice.title()}")
@@ -114,24 +123,37 @@ def main():
         plt.grid()
         plt.show()
 
-    elif product_choice == "fra":
+        elif product_choice == "fra":
         T1 = float(input("Start of FRA (T1): "))
         T2 = float(input("End of FRA (T2): "))
         notional = float(input("Notional: "))
         K = float(input("Contract rate (K): "))
+        dt = 0.01
+        n_paths = 10000
 
+        # Analytical
         P1 = model.zero_coupon_bond_price(T1)
         P2 = model.zero_coupon_bond_price(T2)
         forward_rate = (P1 / P2 - 1) / (T2 - T1)
         price = notional * (forward_rate - K) * (T2 - T1) * P2
+        print(f"\nFRA Analytical Price: {price:.4f} (Forward rate: {forward_rate:.4%})")
 
-        print(f"\nFRA Value: {price:.4f} (Forward rate: {forward_rate:.4%})")
+        # Monte Carlo
+        r_paths = model.simulate_paths(T2, n_paths=n_paths, dt=dt)
+        t1_idx = int(T1 / dt)
+        t2_idx = int(T2 / dt)
+        r_t1 = r_paths[t1_idx]
+        r_t2 = r_paths[t2_idx]
 
-        # Plot: Forward rate vs contract rate
+        df = np.exp(-dt * np.sum(r_paths[:t2_idx], axis=0))
+        mc_forward_rate = (np.exp((r_t1 - r_t2) * (T2 - T1)) - 1) / (T2 - T1)
+        mc_price = np.mean((mc_forward_rate - K) * notional * (T2 - T1) * df)
+        print(f"FRA Monte Carlo Price (n={n_paths}): {mc_price:.4f}")
+
+        # Plot rates
         plt.figure()
-        plt.bar(["Forward Rate", "Contract Rate"], [forward_rate, K], color=["green", "red"])
+        plt.bar(["Analytical Fwd", "Contract K"], [forward_rate, K], color=["green", "red"])
         plt.title("FRA: Forward vs Contract Rate")
-        plt.ylabel("Rate")
         plt.grid(axis="y")
         plt.show()
 
@@ -177,7 +199,10 @@ def main():
         K = float(input("Strike rate (K): "))
         notional = float(input("Notional: "))
         tau = T_end - T_start
+        dt = 0.01
+        n_paths = 10000
 
+        # Analytical
         P = model.zero_coupon_bond_price(T_end)
         fwd = (model.zero_coupon_bond_price(T_start) / P - 1) / tau
         sigma = model.sigma
@@ -185,17 +210,26 @@ def main():
         d2 = d1 - sigma * np.sqrt(T_start)
 
         caplet_price = notional * tau * P * (fwd * norm.cdf(d1) - K * norm.cdf(d2))
-        print(f"\nCaplet Price: {caplet_price:.4f}")
+        print(f"\nCaplet Analytical Price: {caplet_price:.4f}")
 
-        # Plot: Payoff diagram vs forward rate
+        # Monte Carlo
+        r_paths = model.simulate_paths(T_end, n_paths=n_paths, dt=dt)
+        t_idx = int(T_start / dt)
+        rt = r_paths[t_idx]
+        payoff = np.maximum(rt - K, 0) * notional * tau
+        df = np.exp(-dt * np.sum(r_paths[:t_idx], axis=0))
+        mc_price = np.mean(payoff * df)
+        print(f"Caplet Monte Carlo Price (n={n_paths}): {mc_price:.4f}")
+
+        # Plot payoff
         fwd_rates = np.linspace(0, 2 * K, 100)
         payoffs = [max(fr - K, 0) * notional * tau for fr in fwd_rates]
 
         plt.figure()
         plt.plot(fwd_rates, payoffs, label="Caplet Payoff", color="purple")
-        plt.axvline(fwd, color="green", linestyle="--", label="Forward Rate")
+        plt.axvline(fwd, color="green", linestyle="--", label="Fwd Rate")
         plt.axvline(K, color="red", linestyle="--", label="Strike Rate")
-        plt.title("Caplet Payoff Diagram")
+        plt.title("Caplet Payoff")
         plt.xlabel("Forward Rate")
         plt.ylabel("Payoff")
         plt.legend()
