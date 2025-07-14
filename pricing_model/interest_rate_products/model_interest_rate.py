@@ -92,6 +92,8 @@ class HullWhiteModel(ShortRateModel):
 
 # prodcuts.py
 # Base Product class and implementations - MISSING SOME PRODUCTS!
+import multiprocessing as mp
+
 class Product:
     def __init__(self, model):
         self.model = model
@@ -101,6 +103,20 @@ class Product:
 
     def price_monte_carlo(self, n_paths=10000, dt=0.01):
         raise NotImplementedError("Override in subclass")
+
+    def price_monte_carlo_parallel(self, total_paths=100000, dt=0.01, n_workers=None):
+            if n_workers is None:
+                n_workers = mp.cpu_count()
+            paths_per_worker = total_paths // n_workers
+            seeds = np.random.randint(0, 1_000_000, size=n_workers)
+    
+            pool = mp.Pool(n_workers)
+            args = [(self, paths_per_worker, dt, seed) for seed in seeds]
+            results = pool.map(_mc_worker, args)
+            pool.close()
+            pool.join()
+    
+            return np.mean(results)
 
 class ZeroCouponBond(Product):
     def __init__(self, model, maturity):
@@ -255,6 +271,15 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+
+
+# helper.py (outisde class)
+def _mc_worker(args):
+    product, n_paths, dt, seed = args
+    import numpy as np
+    np.random.seed(seed)
+    return product.price_monte_carlo(n_paths=n_paths, dt=dt)
 
 
 
