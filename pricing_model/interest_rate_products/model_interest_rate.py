@@ -2,7 +2,8 @@ import numpy as np
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 
-# Base class for short rate models
+# models.py
+# Base ShortRateModel class and implementations
 class ShortRateModel:
     def __init__(self, r0, a, b, sigma):
         self.r0 = r0
@@ -88,10 +89,179 @@ class HullWhiteModel(ShortRateModel):
         return A * np.exp(-B * r)
 
 
-# Main function
+
+# prodcuts.py
+# Base Product class and implementations - MISSING SOME PRODUCTS!
+class Product:
+    def __init__(self, model):
+        self.model = model
+
+    def price_analytical(self):
+        raise NotImplementedError("Override in subclass")
+
+    def price_monte_carlo(self, n_paths=10000, dt=0.01):
+        raise NotImplementedError("Override in subclass")
+
+class ZeroCouponBond(Product):
+    def __init__(self, model, maturity):
+        super().__init__(model)
+        self.maturity = maturity
+
+    def price_analytical(self):
+        return self.model.zero_coupon_bond_price(self.maturity)
+
+    def price_monte_carlo(self, n_paths=10000, dt=0.01):
+        paths = self.model.simulate_paths(self.maturity, n_paths=n_paths, dt=dt)
+        # Discount factor = exp(- integral r dt), approximate integral by average rate * maturity
+        avg_r = np.mean(paths, axis=0)
+        discounts = np.exp(-avg_r * self.maturity)
+        return np.mean(discounts)
+
+class FRA(Product):
+    def __init__(self, model, start, end, notional, strike):
+        super().__init__(model)
+        self.start = start
+        self.end = end
+        self.notional = notional
+        self.strike = strike
+
+    def price_analytical(self):
+        P_start = self.model.zero_coupon_bond_price(self.start)
+        P_end = self.model.zero_coupon_bond_price(self.end)
+        forward_rate = (P_start / P_end - 1) / (self.end - self.start)
+        price = self.notional * (forward_rate - self.strike) * (self.end - self.start) * P_end
+        return price
+
+    def price_monte_carlo(self, n_paths=10000, dt=0.01):
+        paths = self.model.simulate_paths(self.end, n_paths=n_paths, dt=dt)
+        start_idx = int(self.start / dt)
+        end_idx = int(self.end / dt)
+
+        df = np.exp(-dt * np.sum(paths[:end_idx], axis=0))
+        r_start = paths[start_idx]
+        r_end = paths[end_idx]
+
+        # Approximate forward rate by log return ratio
+        forward_rate = (np.exp((r_start - r_end) * (self.end - self.start)) - 1) / (self.end - self.start)
+        payoff = (forward_rate - self.strike) * self.notional * (self.end - self.start)
+        return np.mean(payoff * df)
+
+class BermudanSwaption(Product):
+    def __init__(self, model, notional, strike, n_exercise, swap_length, total_maturity):
+        super().__init__(model)
+        self.notional = notional
+        self.strike = strike
+        self.n_exercise = n_exercise
+        self.swap_length = swap_length
+        self.total_maturity = total_maturity
+
+    def price_monte_carlo(self, n_paths=10000, dt=0.01):
+        exercise_times = np.linspace(1, self.total_maturity - self.swap_length, self.n_exercise)
+        paths = self.model.simulate_paths(self.total_maturity, n_paths=n_paths, dt=dt)
+        idx_grid = [int(t / dt) for t in exercise_times]
+
+        swaption_values = np.zeros((n_paths, len(idx_grid)))
+        for j, idx in enumerate(idx_grid):
+            t = exercise_times[j]
+            payment_times = np.arange(t + 1, t + self.swap_length + 1)
+            swap_pv = np.zeros(n_paths)
+            for pt in payment_times:
+                d_idx = int(pt / dt)
+                df = np.exp(-np.cumsum(paths[:d_idx], axis=0)[-1] * dt)
+                swap_pv += (self.strike - paths[d_idx]) * df  # receiver swaption
+            swaption_values[:, j] = self.notional * swap_pv
+
+        # Longstaff-Schwartz backward induction
+        value = swaption_values[:, -1]
+        for j in reversed(range(len(idx_grid) - 1)):
+            itm = swaption_values[:, j] > 0
+            X = swaption_values[itm, j]
+            Y = value[itm]
+            if len(X) == 0:
+                continue
+            r_i = paths[idx_grid[j], itm]
+            A = np.vstack([np.ones_like(r_i), r_i, r_i**2]).T
+            coeffs = np.linalg.lstsq(A, Y, rcond=None)[0]
+            continuation = coeffs[0] + coeffs[1] * r_i + coeffs[2] * r_i**2
+            exercise_now = X > continuation
+            idxs = np.where(itm)[0][exercise_now]
+            value[idxs] = X[exercise_now]
+
+        return np.mean(value)
+
+
+# engine.py
+# Pricing Engine
+
+from models import VasicekModel, CIRModel, HullWhiteModel
+from products import ZeroCouponBond, FRA, BermudanSwaption
+
+class PricingEngine:
+    def __init__(self, model_name, model_params, product_name, product_params):
+        # Instantiate model
+        model_classes = {
+            "vasicek": VasicekModel,
+            "cir": CIRModel,
+            "hull-white": HullWhiteModel,
+        }
+        self.model = model_classes[model_name.lower()](**model_params)
+
+        # Instantiate product
+        product_classes = {
+            "zero_coupon": ZeroCouponBond,
+            "fra": FRA,
+            "bermudan_swaption": BermudanSwaption,
+        }
+        self.product = product_classes[product_name.lower()](self.model, **product_params)
+
+    def price(self, method="analytical", **kwargs):
+        if method == "analytical":
+            return self.product.price_analytical()
+        elif method == "monte_carlo":
+            return self.product.price_monte_carlo(**kwargs)
+        else:
+            raise ValueError("Invalid pricing method")
+
+# new main.py
+from engine import PricingEngine
+
+def main():
+    # Example parameters
+    model_name = "vasicek"
+    model_params = {"r0": 0.03, "a": 0.1, "b": 0.05, "sigma": 0.02}
+
+    product_name = "bermudan_swaption"
+    product_params = {
+        "notional": 1_000_000,
+        "strike": 0.03,
+        "n_exercise": 5,
+        "swap_length": 3,
+        "total_maturity": 10,
+    }
+
+    engine = PricingEngine(model_name, model_params, product_name, product_params)
+
+    price_analytical = None
+    try:
+        price_analytical = engine.price(method="analytical")
+    except NotImplementedError:
+        pass
+
+    price_mc = engine.price(method="monte_carlo", n_paths=5000, dt=0.01)
+
+    print(f"Analytical price: {price_analytical}")
+    print(f"Monte Carlo price: {price_mc}")
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+# Old Main function
 def main():
     model_choice = input("Choose model [vasicek / cir / hull-white]: ").strip().lower()
-    product_choice = input("Choose product [zero_coupon]: ").strip().lower()
+    product_choice = input("Choose product [zero_coupon / fra / swap / caplet / bermudan_caplet / bermudan_swaption]: ").strip().lower()
 
     r0 = 0.03
     a = 0.1
@@ -235,6 +405,121 @@ def main():
         plt.legend()
         plt.grid()
         plt.show()
+
+    elif product_choice == "bermudan_caplet":
+        notional = float(input("Notional: "))
+        K = float(input("Strike rate (K): "))
+        n_exercise = int(input("Number of exercise opportunities (e.g. 5): "))
+        T_total = float(input("Final maturity (e.g. 5): "))
+        dt = 0.01
+        n_paths = 10000
+        exercise_times = np.linspace(1, T_total, n_exercise)  # e.g., yearly
+
+        # Simulate short-rate paths
+        paths = model.simulate_paths(T_total, n_paths=n_paths, dt=dt)
+        time_grid = np.arange(0, T_total + dt, dt)
+        payoff_matrix = np.zeros((n_paths, len(exercise_times)))
+        discount_matrix = np.ones((n_paths, len(exercise_times)))
+
+        for i, t in enumerate(exercise_times):
+            idx = int(t / dt)
+            r_t = paths[idx]
+            payoff_matrix[:, i] = np.maximum(r_t - K, 0) * notional * (exercise_times[1] - exercise_times[0])
+            # Cumulative discount from t=0 to t
+            discount_matrix[:, i] = np.exp(-np.cumsum(paths[:idx], axis=0)[-1] * dt)
+
+        # Longstaff-Schwartz Backward Induction
+        value = np.zeros(n_paths)
+        exercise_idx = len(exercise_times) - 1
+        value[:] = payoff_matrix[:, exercise_idx] * discount_matrix[:, exercise_idx]
+
+        for i in reversed(range(exercise_idx)):
+            itm = payoff_matrix[:, i] > 0
+            X = payoff_matrix[itm, i]
+            Y = value[itm]  # continuation value
+            if len(X) == 0:
+                continue
+            # Regression: continuation value ~ r
+            r_i = paths[int(exercise_times[i] / dt), itm]
+            A = np.vstack([np.ones_like(r_i), r_i, r_i**2]).T
+            coeffs = np.linalg.lstsq(A, Y, rcond=None)[0]
+            continuation = coeffs[0] + coeffs[1] * r_i + coeffs[2] * r_i**2
+            exercise_now = X > continuation
+            # Update value
+            idxs = np.where(itm)[0][exercise_now]
+            value[idxs] = X[exercise_now] * discount_matrix[idxs, i]
+
+        bermudan_price = value.mean()
+        print(f"\nBermudan Caplet Price (Early exercise): {bermudan_price:.4f}")
+
+        # Plot: Average optimal exercise rate by date
+        exercised_avg = np.mean((payoff_matrix * discount_matrix) > 0, axis=0)
+
+        plt.figure()
+        plt.bar([f"{t:.1f}" for t in exercise_times], exercised_avg * 100)
+        plt.title("Bermudan Caplet: Exercise Frequency by Time")
+        plt.xlabel("Exercise Time")
+        plt.ylabel("Exercise % of Paths")
+        plt.grid()
+        plt.show()
+
+    elif product_choice == "bermudan_swaption":
+        notional = float(input("Notional: "))
+        K = float(input("Strike rate (K): "))
+        n_ex_dates = int(input("Number of exercise dates (e.g. 5): "))
+        swap_length = float(input("Swap length after exercise (e.g. 3 years): "))
+        total_maturity = float(input("Total product maturity (e.g. 10 years): "))
+        dt = 0.01
+        n_paths = 10000
+
+        exercise_times = np.linspace(1, total_maturity - swap_length, n_ex_dates)
+        paths = model.simulate_paths(total_maturity, n_paths=n_paths, dt=dt)
+        time_grid = np.arange(0, total_maturity + dt, dt)
+        idx_grid = [int(t / dt) for t in exercise_times]
+
+        swaption_values = np.zeros((n_paths, len(idx_grid)))
+
+        for j, idx in enumerate(idx_grid):
+            t = exercise_times[j]
+            payment_times = np.arange(t + 1, t + swap_length + 1)
+            swap_pv = np.zeros(n_paths)
+            for pt in payment_times:
+                d_idx = int(pt / dt)
+                df = np.exp(-np.cumsum(paths[:d_idx], axis=0)[-1] * dt)
+                swap_pv += (K - paths[d_idx]) * df  # receiver swaption
+            swaption_values[:, j] = notional * swap_pv
+
+        # Backward induction for early exercise
+        value = swaption_values[:, -1]
+        for j in reversed(range(len(idx_grid) - 1)):
+            itm = swaption_values[:, j] > 0
+            X = swaption_values[itm, j]
+            Y = value[itm]
+            if len(X) == 0:
+                continue
+            r_i = paths[idx_grid[j], itm]
+            A = np.vstack([np.ones_like(r_i), r_i, r_i**2]).T
+            coeffs = np.linalg.lstsq(A, Y, rcond=None)[0]
+            continuation = coeffs[0] + coeffs[1] * r_i + coeffs[2] * r_i**2
+            exercise_now = X > continuation
+            idxs = np.where(itm)[0][exercise_now]
+            value[idxs] = X[exercise_now]
+
+        swaption_price = np.mean(value)
+        print(f"\nBermudan Swaption Price (Receiver): {swaption_price:.4f}")
+
+        # Visualization: % exercised per date
+        exercise_flags = (swaption_values > 0).astype(int)
+        avg_exercise = exercise_flags.mean(axis=0)
+
+        plt.figure()
+        plt.bar([f"{t:.1f}" for t in exercise_times], avg_exercise * 100)
+        plt.title("Bermudan Swaption: Exercise Frequency by Date")
+        plt.xlabel("Exercise Time")
+        plt.ylabel("% of In-the-Money Paths")
+        plt.grid()
+        plt.show()
+
 
     else:
         print("Invalid product.")
